@@ -221,11 +221,10 @@ Clear History
 let map = L.map('map').setView([7.957,80.760],14);
 
 L.tileLayer(
-'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
 {
 maxZoom:19,
-subdomains:'abcd',
-attribution:'© OpenStreetMap © CARTO'
+attribution:'Tiles © Esri'
 }
 ).addTo(map);
 
