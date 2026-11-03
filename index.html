@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>RiderMeter</title>
+
+<link rel="stylesheet"
+href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+* {
+  box-sizing:border-box;
+}
+
+body {
+  margin:0;
+  background:#101820;
+  color:white;
+  font-family:Arial,sans-serif;
+}
+
+header {
+  background:#172b3a;
+  padding:20px;
+  text-align:center;
+  font-size:25px;
+  font-weight:bold;
+  color:#00e5a0;
+}
+
+.container {
+  max-width:600px;
+  margin:auto;
+  padding:15px;
+}
+
+#map {
+  height:300px;
+  border-radius:15px;
+  margin-bottom:15px;
+}
+
+.card {
+  background:#1c2d3a;
+  padding:18px;
+  border-radius:14px;
+  margin-bottom:15px;
+}
+
+h3 {
+  color:#00e5a0;
+}
+
+.row {
+  display:flex;
+  justify-content:space-between;
+  padding:13px 0;
+  border-bottom:1px solid #40505c;
+}
+
+.value {
+  color:#00e5a0;
+  font-weight:bold;
+}
+
+button {
+  width:100%;
+  padding:16px;
+  border:0;
+  border-radius:10px;
+  margin:6px 0;
+  font-size:17px;
+  font-weight:bold;
+}
+
+.start {
+  background:#00d68f;
+  color:#10251d;
+}
+
+.stop {
+  background:#ff5252;
+  color:white;
+}
+
+.reset {
+  background:#40566a;
+  color:white;
+}
+
+input {
+  width:100%;
+  padding:13px;
+  border:0;
+  border-radius:8px;
+  margin:8px 0 15px;
+  font-size:16px;
+}
+
+.history-item {
+  background:#293d4b;
+  padding:12px;
+  border-radius:9px;
+  margin:8px 0;
+  font-size:14px;
+}
+
+.small {
+  font-size:13px;
+  color:#bbb;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>🛵 RiderMeter</header>
+
+<div class="container">
+
+<div id="map"></div>
+
+<div class="card">
+
+<h3>TRIP INFORMATION</h3>
+
+<div class="row">
+<span>Status</span>
+<span class="value" id="status">Ready</span>
+</div>
+
+<div class="row">
+<span>Distance</span>
+<span class="value">
+<span id="distance">0.00</span> KM
+</span>
+</div>
+
+<div class="row">
+<span>Duration</span>
+<span class="value" id="duration">00:00:00</span>
+</div>
+
+<div class="row">
+<span>Delivery Fee</span>
+<span class="value">
+Rs. <span id="fare">250</span>
+</span>
+</div>
+
+</div>
+
+<div class="card">
+
+<h3>DELIVERY PRICES</h3>
+
+<label>First 2 KM Price (Rs.)</label>
+<input type="number" id="basePrice" value="250">
+
+<label>Additional 1 KM Price (Rs.)</label>
+<input type="number" id="extraPrice" value="70">
+
+</div>
+
+<button class="start" onclick="startTrip()">
+▶ START TRIP
+</button>
+
+<button class="stop" onclick="stopTrip()">
+■ STOP TRIP
+</button>
+
+<button class="reset" onclick="resetTrip()">
+↻ RESET
+</button>
+
+<div class="card">
+
+<h3>📊 DAILY INCOME</h3>
+
+<div class="row">
+<span>Today's Trips</span>
+<span class="value" id="todayTrips">0</span>
+</div>
+
+<div class="row">
+<span>Today's Income</span>
+<span class="value">
+Rs. <span id="todayIncome">0</span>
+</span>
+</div>
+
+</div>
+
+<div class="card">
+
+<h3>📚 TRIP HISTORY</h3>
+
+<div id="history">
+No trips yet.
+</div>
+
+<button class="reset" onclick="clearHistory()">
+Clear History
+</button>
+
+</div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+
+// MAP
+
+let map = L.map('map').setView([7.957,80.760],14);
+
+L.tileLayer(
+'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+{
+maxZoom:19,
+attribution:'© OpenStreetMap'
+}
+).addTo(map);
+
+let line = L.polyline([], {
+color:'#00e5a0',
+weight:5
+}).addTo(map);
+
+let marker = null;
+
+
+// VARIABLES
+
+let watchID = null;
+let timer = null;
+
+let running = false;
+
+let totalDistance = 0;
+let lastPosition = null;
+
+let startTime = null;
+let elapsed = 0;
+
+let tripPoints = [];
+
+
+// STORAGE
+
+let history = JSON.parse(
+localStorage.getItem('riderHistory') || '[]'
+);
+
+
+// DISTANCE CALCULATION
+
+function distanceBetween(a,b) {
+
+const R = 6371;
+
+let dLat =
+(b.lat-a.lat)*Math.PI/180;
+
+let dLon =
+(b.lng-a.lng)*Math.PI/180;
+
+let x =
+Math.sin(dLat/2)**2 +
+Math.cos(a.lat*Math.PI/180) *
+Math.cos(b.lat*Math.PI/180) *
+Math.sin(dLon/2)**2;
+
+return R * 2 *
+Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+
+}
+
+
+// FARE CALCULATION
+
+function calculateFare() {
+
+let base =
+Number(document.getElementById('basePrice').value);
+
+let extra =
+Number(document.getElementById('extraPrice').value);
+
+let fare;
+
+if(totalDistance <= 2) {
+
+fare = base;
+
+} else {
+
+fare = base +
+Math.ceil(totalDistance-2) * extra;
+
+}
+
+return fare;
+
+}
+
+
+// UPDATE SCREEN
+
+function updateScreen() {
+
+document.getElementById('distance').innerText =
+totalDistance.toFixed(2);
+
+document.getElementById('fare').innerText =
+calculateFare();
+
+}
+
+
+// GPS START
+
+function startTrip() {
+
+if(running) return;
+
+if(!navigator.geolocation) {
+
+alert('GPS not supported!');
+
+return;
+
+}
+
+if(!navigator.onLine) {
+
+alert('Open this app online first. GPS can work offline after loading.');
+
+}
+
+running = true;
+
+totalDistance = 0;
+elapsed = 0;
+lastPosition = null;
+tripPoints = [];
+
+startTime = Date.now();
+
+line.setLatLngs([]);
+
+document.getElementById('status').innerText =
+'Running';
+
+updateScreen();
+
+watchID =
+navigator.geolocation.watchPosition(
+
+function(position) {
+
+if(!running) return;
+
+let current = {
+
+lat:position.coords.latitude,
+lng:position.coords.longitude
+
+};
+
+let accuracy = position.coords.accuracy;
+
+// Ignore inaccurate GPS readings
+
+if(accuracy > 50) return;
+
+if(lastPosition) {
+
+let d = distanceBetween(
+lastPosition,
+current
+);
+
+// Ignore GPS noise and unrealistic jumps
+
+if(d >= 0.003 && d < 0.5) {
+
+totalDistance += d;
+
+lastPosition = current;
+
+} else if(d >= 0.5) {
+
+// Large jump: wait for next accurate reading
+
+return;
+
+} else {
+
+lastPosition = current;
+
+}
+
+} else {
+
+lastPosition = current;
+
+}
+
+tripPoints.push([current.lat,current.lng]);
+
+line.addLatLng([current.lat,current.lng]);
+
+if(!marker) {
+
+marker = L.marker(
+[current.lat,current.lng]
+).addTo(map);
+
+} else {
+
+marker.setLatLng(
+[current.lat,current.lng]
+);
+
+}
+
+map.setView(
+[current.lat,current.lng],
+16
+);
+
+updateScreen();
+
+},
+
+function(error) {
+
+document.getElementById('status').innerText =
+'GPS Error';
+
+alert('GPS Error: ' + error.message);
+
+},
+
+{
+
+enableHighAccuracy:true,
+maximumAge:1000,
+timeout:20000
+
+}
+
+);
+
+timer = setInterval(function() {
+
+if(!running) return;
+
+elapsed = Math.floor(
+(Date.now()-startTime)/1000
+);
+
+let h = Math.floor(elapsed/3600);
+
+let m = Math.floor((elapsed%3600)/60);
+
+let s = elapsed%60;
+
+document.getElementById('duration').innerText =
+
+String(h).padStart(2,'0') + ':' +
+String(m).padStart(2,'0') + ':' +
+String(s).padStart(2,'0');
+
+},1000);
+
+}
+
+
+// STOP TRIP
+
+function stopTrip() {
+
+if(!running) return;
+
+running = false;
+
+navigator.geolocation.clearWatch(watchID);
+
+clearInterval(timer);
+
+let trip = {
+
+date:new Date().toLocaleDateString(),
+
+time:new Date().toLocaleTimeString(),
+
+distance:totalDistance.toFixed(2),
+
+fare:calculateFare(),
+
+duration:elapsed
+
+};
+
+history.unshift(trip);
+
+localStorage.setItem(
+'riderHistory',
+JSON.stringify(history)
+);
+
+document.getElementById('status').innerText =
+'Completed';
+
+updateHistory();
+
+alert(
+'TRIP COMPLETED!\n\n' +
+'Distance: '+trip.distance+' KM\n' +
+'Fare: Rs. '+trip.fare
+);
+
+}
+
+
+// RESET
+
+function resetTrip() {
+
+if(running) {
+
+alert('Stop the trip first!');
+
+return;
+
+}
+
+totalDistance = 0;
+elapsed = 0;
+lastPosition = null;
+startTime = null;
+
+line.setLatLngs([]);
+
+if(marker) {
+
+map.removeLayer(marker);
+marker = null;
+
+}
+
+document.getElementById('status').innerText =
+'Ready';
+
+document.getElementById('duration').innerText =
+'00:00:00';
+
+updateScreen();
+
+}
+
+
+// HISTORY
+
+function updateHistory() {
+
+let html = '';
+
+let today = new Date().toLocaleDateString();
+
+let todayTrips = history.filter(
+t => t.date === today
+);
+
+let income = todayTrips.reduce(
+(sum,t) => sum + Number(t.fare),
+0
+);
+
+document.getElementById('todayTrips').innerText =
+todayTrips.length;
+
+document.getElementById('todayIncome').innerText =
+income;
+
+if(history.length === 0) {
+
+html = 'No trips yet.';
+
+} else {
+
+history.forEach(function(t) {
+
+html += `
+
+<div class="history-item">
+
+<b>📅 ${t.date} - ${t.time}</b>
+
+<p>Distance: ${t.distance} KM</p>
+
+<p>Delivery Fee: Rs. ${t.fare}</p>
+
+<p class="small">Duration: ${t.duration} Seconds</p>
+
+</div>
+
+`;
+
+});
+
+}
+
+document.getElementById('history').innerHTML =
+html;
+
+}
+
+
+// CLEAR HISTORY
+
+function clearHistory() {
+
+if(running) {
+
+alert('Stop the trip first!');
+
+return;
+
+}
+
+if(confirm('Delete all trip history?')) {
+
+history = [];
+
+localStorage.removeItem('riderHistory');
+
+updateHistory();
+
+}
+
+}
+
+
+// INITIAL LOAD
+
+updateHistory();
+
+updateScreen();
+
+</script>
+
+</body>
+</html>
